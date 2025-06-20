@@ -8,7 +8,12 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "smolagents (>=1.18.0,<2.0.0)",
+    "litellm (>=1.72.7,<2.0.0)"
 ]
+
+[project.scripts]
+alc = "ai_life_coach.cli:main"
 
 [tool.poetry]
 packages = [{include = "ai_life_coach", from = "src"}]
