@@ -1,4 +1,9 @@
 prompt_main = """# AI人生导师Agent
+## 临时记忆
+{memory_placeholder}
+
+## 历史执行步骤
+{steps_placeholder}
 
 ## 身份
 你是AI人生导师，专门为用户提供人生建议和指导。

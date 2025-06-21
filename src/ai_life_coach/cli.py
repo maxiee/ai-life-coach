@@ -1,9 +1,9 @@
 import os
 import sys
 import json
-
 from openai import OpenAI
 from .prompts.tool_manager import ToolManager
+from .prompts.prompt_main import prompt_main
 
 client = OpenAI(
     api_key=os.getenv("AI_LIFE_COACH_KEY", ""), base_url="https://api.siliconflow.cn/v1"
@@ -11,7 +11,8 @@ client = OpenAI(
 
 model_Qwen3_30B_A3B = "Qwen/Qwen3-30B-A3B"
 
-# 全局工具管理器
+
+# Global tool manager
 tool_manager = ToolManager()
 
 
@@ -78,21 +79,24 @@ def execute_tool(tool_name, **kwargs):
         return f"⚠️ 未知工具: {tool_name}"
 
 
-def chat(messages, model=model_Qwen3_30B_A3B):
-    """与AI模型进行对话
+# MsgStructure: maintain memory and steps as placeholders, always fill prompt_main
+def build_system_prompt(memory, steps):
+    """Build the system prompt with memory and steps placeholders."""
+    tools_section = "\n".join(tool_manager.tools)
+    return prompt_main.format(
+        memory_placeholder=memory or "(empty)",
+        steps_placeholder=steps or "(empty)",
+        tools_placeholder=tools_section,
+    )
 
-    Args:
-        messages: 对话消息列表
-        model: 使用的AI模型
 
-    Returns:
-        AI模型的回复
-    """
-    # 确保第一条消息是系统提示词
-    if not messages or messages[0]["role"] != "system":
-        system_prompt = tool_manager.get_prompt()
-        messages.insert(0, {"role": "system", "content": system_prompt})
-
+def chat(user_input, memory, steps, model=model_Qwen3_30B_A3B):
+    """Chat with the AI model using MsgStructure."""
+    system_prompt = build_system_prompt(memory, steps)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_input},
+    ]
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -136,80 +140,60 @@ def parse_tool_calls(response_text):
     return tool_calls
 
 
-def process_with_tools(user_input, conversation_history):
-    """处理用户输入，包含工具调用逻辑"""
-
-    # 构建对话消息
-    messages = conversation_history + [{"role": "user", "content": user_input}]
-
-    # 第一次调用AI
-    ai_response = chat(messages)
+# MsgStructure: memory/steps are strings, not message lists
+def process_with_tools(user_input, memory, steps):
+    """Process user input, update memory and steps as MsgStructure placeholders."""
+    # 1st round: send user_input, get AI response
+    ai_response = chat(user_input, memory, steps)
     print(f"🤖 AI导师: {ai_response}")
 
-    # 检查是否需要工具调用
-    tool_calls = parse_tool_calls(ai_response)
+    # Update steps with this round
+    steps = (steps or "") + f"\n[User]: {user_input}\n[AI]: {ai_response}\n"
 
+    # Check for tool calls
+    tool_calls = parse_tool_calls(ai_response)
     if tool_calls:
         print("\n🔧 执行工具...")
-
-        # 执行工具并收集结果
         tool_results = []
         for tool_name, kwargs in tool_calls:
             print(f"   调用 {tool_name}...")
             result = execute_tool(tool_name, **kwargs)
             tool_results.append(f"工具 {tool_name} 结果: {result}")
             print(f"   ✅ {result}")
-
-        # 将工具结果反馈给AI
-        if tool_results:
-            tool_feedback = "\n".join(tool_results)
-            messages.append({"role": "assistant", "content": ai_response})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": f"工具执行结果:\n{tool_feedback}\n\n请基于这些结果给出最终建议。",
-                }
-            )
-
-            final_response = chat(messages)
-            print(f"\n🎯 最终建议: {final_response}")
-
-            return messages + [{"role": "assistant", "content": final_response}]
-
-    # 如果没有工具调用，直接返回
-    return messages + [{"role": "assistant", "content": ai_response}]
+        # Feedback tool results to AI
+        tool_feedback = "\n".join(tool_results)
+        tool_feedback_input = (
+            f"工具执行结果:\n{tool_feedback}\n\n请基于这些结果给出最终建议。"
+        )
+        final_response = chat(tool_feedback_input, memory, steps)
+        print(f"\n🎯 最终建议: {final_response}")
+        steps += f"[Tool]: {tool_feedback}\n[AI]: {final_response}\n"
+        return memory, steps
+    return memory, steps
 
 
 def main():
-    """主函数，处理命令行输入"""
-    # 初始化工具
+    """Main function, handles CLI input and MsgStructure memory/steps."""
     init_tools()
-
     print("🌟 AI人生导师已启动！")
     print("💡 提示：你可以询问关于职业规划、学习方法、时间管理等问题")
     print("🔧 我会根据需要使用工具来更好地帮助你")
     print("👋 输入 'quit' 或 'exit' 退出\n")
 
-    conversation_history = []
+    memory = ""  # Temporary memory placeholder
+    steps = ""  # History steps placeholder
 
     while True:
         try:
             user_input = input("👤 你: ").strip()
-
             if user_input.lower() in ["quit", "exit", "退出"]:
                 print("👋 再见！祝你生活愉快！")
                 break
-
             if not user_input:
                 continue
-
-            print()  # 空行分隔
-
-            # 处理用户输入（包含工具调用）
-            conversation_history = process_with_tools(user_input, conversation_history)
-
-            print("\n" + "=" * 50 + "\n")  # 分隔线
-
+            print()
+            memory, steps = process_with_tools(user_input, memory, steps)
+            print("\n" + "=" * 50 + "\n")
         except KeyboardInterrupt:
             print("\n👋 再见！")
             break
